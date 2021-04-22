@@ -12,7 +12,7 @@ Analyze videos of *C. elegans* behavior using persistent homology techniques as 
 
 
 ## Usage
-1. Symlink `config.R` to desired config file in `config` folder. In that config file, set `window_length`, `patch_length`, and number of frames `nframes` as desired. Also include the filepaths for the input data, which is a 100-dimensional time series of angles formatted as a csv. 
+1. In `config.R`, set `window_length`, `patch_length`, and number of frames `nframes` as desired. Also include the filepaths for the input data, which is a 100-dimensional time series of angles formatted as a csv (each row is a 100-dimensional vector). 
 
 2. Run `compute_diagrams.R`. This does the heavy computations and can run for hours depending on parameter choice. 
         
