@@ -1,0 +1,485 @@
+---
+  title: "Load and analyze diagram computations from compute_diagrams.R"
+  output:
+  html_document:
+  df_print: paged
+---
+Ashleigh Thomas*, Alex Elchesen, Iryna Hartsock
+*althomas41@gmail.com
+October 2020
+
+```{r global_options, echo=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+```{r libraries, message=FALSE}
+library(viridis) # for colors
+library(tdatools)
+
+source("./source/persistence_utilities.R")
+source("./source/clean_NaNs.R")
+source("./source/subsample_patches.R")
+source("./source/sliding_window_embedding.R")
+source("./source/stat_utilities.R")
+```
+
+```{r config}
+load_file <- "./computations/viscosity_persistence_n500_p100_w5_2021-04-21_15:44.RData"
+load(load_file)
+print(sprintf("type of data: %s", data_type))
+print(sprintf("patch length %i", patch_length))
+print(sprintf("window length %i", window_length))
+samples_per_class <- as.data.frame(table(class_index))[,2] # number of samples in each class
+print(sprintf("nsamples=%i, nclasses=%i", nsamples, nclasses))
+print(sprintf("computation README: %s", README_computation))
+print(sprintf("config README: %s", README_config))
+```
+
+```{r display-diagrams, fig.width=2, fig.height=2, eval=FALSE}
+# display the diagrams for each patch in a sample. 
+i <- 1 # sample index
+for (j in 1:length(PDs[[i]])){ # patch number  
+  plot_diagram(PDs[[i]][[j]]$pairs[[2]])
+  title(main=sprintf("%s, %s, patch %i", classes[class_index[i]],filename_bases[i], j))
+}
+```
+
+```{r compute-landscape-parameters}
+# parameters for discretizing landscapes must be consistent across landscapes
+# and adequately represent all the data. 
+dx <- 0.1   # step size in landscape discretization
+min_x <- 0  # minimum parameter at which all landscapes are nonzero
+max_x <- 0  # maximum parameter at which all landscapes are nonzero
+max_y <- 0  # maximum height over all landscapes
+
+for (i in 1:length(data_filenames)){
+  for (j in 1:length(PDs[[i]])){
+    max_x <- max(max_x, PDs[[i]][[j]]$pairs[[2]][,2])
+    if (length(PDs[[i]][[j]]$pairs[[2]]) > 0){ # diagram not empty
+      patch_max_y <- max(0.5*(PDs[[i]][[j]]$pairs[[2]][,2]-PDs[[i]][[j]]$pairs[[2]][,1]))
+      if (max_y < patch_max_y){
+      }
+    } else { # diagram is empty
+      # print(sprintf("%s patch %i has empty diagram", data_filenames[i], j))
+    }
+    max_y <- max(max_y, 0.5*(PDs[[i]][[j]]$pairs[[2]][,2]-PDs[[i]][[j]]$pairs[[2]][,1]))
+  }
+}
+
+landscape_length <- ceiling((max_x-min_x)/dx) # number of discrete points in 
+                                      #domain of individual landscape functions
+
+print(sprintf("dx=%f, min_x=%f, max_x=%f, max_y=%f, landscape_length=%i", dx, min_x, max_x, max_y, landscape_length))
+
+```
+
+```{r compute-landscapes}
+# compute landscapes and collect information about the maximum depths of the landscapes
+PLs <- list()
+PL_depth_cap <- Inf   # highest landscape depth to consider
+max_PL_depth <- 0     # highest landscape depth over all landscapes
+min_PL_depth <- Inf   # lowest landscape depth over all landscapes
+for (i in 1:nsamples){
+  PLs[[i]] <- list()
+  for (j in 1:length(PDs[[i]])){
+    PLs[[i]][[j]] <- landscape0(PDs[[i]][[j]]$pairs[[2]], degree=1, exact=FALSE, dx=dx, min_x=min_x, max_x=max_x)
+    depth <- dim(PLs[[i]][[j]]$getInternal())[1]
+    max_PL_depth <- max(max_PL_depth, depth)
+    if (depth > 1) { # nonzero landscape
+      min_PL_depth <- min(min_PL_depth, depth)
+    }
+  }
+}
+PL_depth_cap <- min(max_PL_depth, PL_depth_cap)
+print(sprintf("min_PL_depth=%i, max_PL_depth=%i. Setting PL_depth_cap to %i", min_PL_depth, max_PL_depth, PL_depth_cap))
+```
+
+```{r sample-and-class-average-landscapes}
+# compute average landscapes for each sample and for each class
+# (one sample is a single video of a worm, 
+# a class is all the samples from a single experimental condition).
+# Note: may get warning message "implicit list embedding of S4 objects is deprecated" 
+
+# sample averages
+sample_avg_max_y <- 0 # maxmimum height across all sample landscapes
+sample_avg_PLs <- list()
+for (i in 1:nsamples){
+  PL_sum <- PLs[[i]][[1]]
+  if (length(PDs[[i]]) > 1){
+    for (j in 2:length(PDs[[i]])){
+      PL_sum <- PLsum(PL_sum, PLs[[i]][[j]])
+    }
+  }
+  sample_avg_PLs[[i]] <- PLscale(1/length(PDs[[i]]), PL_sum)
+  sample_avg_max_y <- max(sample_avg_max_y, sample_avg_PLs[[i]]$getInternal()[1,,2], na.rm=TRUE)
+}
+
+# class averages
+class_avg_max_y <- 0 # maxmimum height across all class landscapes
+class_PL_sums <- list()
+class_avg_PLs <- list()
+for (k in 1:nclasses){ # initialize with zero landscapes
+  class_PL_sums[[k]] <- landscape0(t(c(0,0)), degree=1, exact=FALSE, dx=dx, min_x=min_x, max_x=max_x)
+}
+for (i in 1:nsamples){
+  class_PL_sums[class_index[i]] <- PLsum(sample_avg_PLs[[i]], class_PL_sums[[class_index[i]]])
+}
+
+for (k in 1:nclasses){
+  class_avg_PLs[[k]] <- PLscale(1/samples_per_class[k], class_PL_sums[[k]])
+  class_avg_max_y <- max(class_avg_max_y, class_avg_PLs[[k]]$getInternal()[1,,2], na.rm=TRUE)
+}
+for (k in 1:nclasses){
+  plot_landscape(class_avg_PLs[[k]], class_avg_max_y)
+  title(main=sprintf("%s average landscape (%i samples)", classes[k], samples_per_class[k]), line=1.3)
+}
+# for (k in 1:nclasses){
+#   plot_landscape(class_avg_PLs[[k]], sample_avg_max_y)
+#   title(main=sprintf("%s average landscape (%i samples) on max sample height", classes[k], samples_per_class[k]), line=1.3)
+# }
+```
+
+```{r plot-landscape-range-by-depth, eval=FALSE}
+# plot kth landscape of each sample in a class on the same plot, for k=1,2,3
+line_width <- 1
+for (d in 1:3){ # depth of landscape
+  for (class_i in 1:nclasses){ #nclasses
+    plot(0, type='l', ann=FALSE, bty="n", col=viridis(1), lwd=line_width, xlim=c(min_x,max_x), ylim=c(0,sample_avg_max_y), xaxt='n', yaxt='n', )
+    title(main=sprintf("%s depth %i", classes[class_i], d), line=1.3)
+    for (sample_i in ((class_i-1)*10+1):(class_i*10)){
+      lines_single_landscape(sample_avg_PLs[[sample_i]], depth=d, color=viridis(10)[d])
+    }
+  }
+}
+```
+
+```{r vectorize-avg-landscapess}
+# Landscapes are a sequence of functions (one landscape at each depth)
+# and each function is on the same finite domain so it can be represented by
+# a sequence of real numbers (the y values). 
+# Concatenate all the values at all the functions to get a finite-dimension
+# vector for each landscape. 
+vectorized_class_PLs <- vectorize_landscapes(class_avg_PLs, PL_depth_cap)
+vectorized_sample_PLs <- vectorize_landscapes(sample_avg_PLs, PL_depth_cap)
+```
+
+
+```{r explore-sample-swe, eval=FALSE}
+# For a given sample, display the spaces from which the diagrams were computed
+# ie, for each patch of the original data, display the sliding window embedding
+# these were not saved so we have to reload and recompute them. 
+
+i <- 1 # index of sample to explore
+raw_data <- read.csv(file=paste0(data_file_location,data_filenames[[i]]), header=FALSE)
+raw_data <- clean_NaNs(raw_data)
+patches <- subsample_patches(patch_length, raw_data)
+npatches <- length(patches)
+for (j in 1:min(npatches,5)){
+    swe <- sliding_window_embedding(patches[[j]], window_length)
+    swe_npoints <- nrow(swe)
+    swe_pca <- prcomp(swe, scale = FALSE)
+    swe_vars <- apply(swe_pca$x, 2, var)
+    swe_props <- swe_vars / sum(swe_vars)
+    swe_cumprop2 <- 100*cumsum(swe_props)[2]
+    
+    orig_npoints <- nrow(patches[[j]])
+    orig_pca <- prcomp(patches[[j]], scale = FALSE)
+    orig_vars <- apply(orig_pca$x, 2, var)
+    orig_props <- orig_vars / sum(orig_vars)
+    orig_cumprop2 <- 100*cumsum(orig_props)[2]
+
+    par(mfrow=c(1,2),oma = c(0, 0, 2, 0))
+    plot(orig_pca$x[,c(1,2)], ann=FALSE, col=viridis(orig_npoints), pch=19, bty="n", asp=1)
+    title(main=sprintf("Original, %.1f%% variance described", orig_cumprop2))
+    plot(swe_pca$x[,c(1,2)], ann=FALSE, col=viridis(swe_npoints), pch=19, bty="n", asp=1)
+    title(main=sprintf("SWE L=%i, %.1f%% var described", window_length, swe_cumprop2))
+    mtext(sprintf("%s, %s, patch %i", classes[class_index[i]], samples[i], j), outer = TRUE, cex = 1.5)
+}
+```
+
+
+```{r explore-sample-persistence, eval=FALSE}
+# explore the persistence for a single sample
+
+i <- 1 # index of sample to explore
+for (j in 1:min(5,length(PDs[[i]]))){
+  par(mfrow=c(1,2),oma = c(0, 0, 2, 0))
+  plot_diagram(PDs[[i]][[j]]$pairs[[2]], dgm_max=max(max_x,max_y), dgm_min=0)
+  title(main=sprintf("patch diagram"))
+  plot_landscape(PLs[[i]][[j]], max_y)
+  title(main=sprintf("patch landscape"))
+  mtext(sprintf("%s, %s, patch %i", classes[class_index[i]], samples[i], j), outer = TRUE, cex = 1.5)
+}
+# compare to samplewise average and daywise average
+par(mfrow=c(1,2),oma = c(0, 0, 2, 0))
+plot_landscape(sample_avg_PLs[[i]], max_y)
+title(main=sprintf("sample average landscape"))
+plot_landscape(class_avg_PLs[[class_index[i]]], max_y)
+title(main=sprintf("class average landscape"))
+mtext(sprintf("%s, %s", classes[class_index[i]], samples[i]), outer = TRUE, cex = 1.5)
+```
+
+```{r explore-sample-PCA, eval=FALSE}
+# compute PCA on patch landscapes
+# plot projections of patch PLs and samplewise avg PLs
+indices <- c(1,2)
+for (i in indices){
+  if (length(PLs[[i]]) > 1){
+    vectorized_patch_PLs <- vectorize_landscapes(PLs[[i]], PL_depth_cap)
+    vectorized_sample_PL <- vectorize_landscapes(sample_avg_PLs[i], PL_depth_cap)
+    vectorized_class_PL <- vectorize_landscapes(class_avg_PLs[class_index[i]], PL_depth_cap)
+
+    patch_pca <- prcomp(vectorized_patch_PLs, scale=FALSE)
+    patch_vars <- apply(patch_pca$x, 2, var)
+    patch_props <- patch_vars / sum(patch_vars)
+    patch_cumprop2 <- 100*cumsum(patch_props)[2]
+    projected_vectorized_sample_PL <- scale(vectorized_sample_PL, patch_pca$center, patch_pca$scale) %*% patch_pca$rotation
+    projected_vectorized_class_PL <- scale(vectorized_class_PL, patch_pca$center, patch_pca$scale) %*% patch_pca$rotation
+
+    x_lim <- c(min(patch_pca$x[,1], projected_vectorized_sample_PL[,1], projected_vectorized_class_PL[,1]),
+               max(patch_pca$x[,1], projected_vectorized_sample_PL[,1], projected_vectorized_class_PL[,1]))
+    y_lim <- c(min(patch_pca$x[,2], projected_vectorized_sample_PL[,2], projected_vectorized_class_PL[,2]),
+               max(patch_pca$x[,2], projected_vectorized_sample_PL[,2], projected_vectorized_class_PL[,2]))
+
+    npoints <- length(PLs[[i]])
+    plot(0, col='white', ann=FALSE, bty="n", xlim=x_lim, ylim=y_lim)
+    title(main=sprintf("%s, %s, all patches, sampAvg=red, cohAvg=blue, %.0f%%", classes[class_index[i]], samples[i], patch_cumprop2))
+    points(patch_pca$x[,c(1,2)], ann=FALSE, col='black')
+    points(t(projected_vectorized_sample_PL[,c(1,2)]), col='red')
+    points(t(projected_vectorized_class_PL[,c(1,2)]), col='blue')
+  }
+}
+
+```
+
+```{r explore-class-persistence, eval=FALSE}
+# for a given class, see also the sample average landscapes, 
+# plus the class average landscape
+
+k <- 1 # class index
+temp_max_y <- 0
+for (i in which(class_index==k)){
+  temp_max_y <- max(temp_max_y, get_landscape_y_max(sample_avg_PLs[[i]]))
+}
+
+for (i in 1:nsamples){
+  if (class_index[i] == k){
+    plot_landscape(sample_avg_PLs[[i]], temp_max_y)
+    title(main=sprintf("%s, %s, sample no. %i", classes[class_index[i]], samples[i], i))
+  }
+}
+plot_landscape(class_avg_PLs[[k]], temp_max_y)
+title(main=sprintf("%s average landscape", classes[k]))
+
+```
+
+```{r explore-class-PCA}
+# compute PCA on sample landscapes for a given class
+# plot projections of sample avg PLs and corresponding class avg PL
+
+# samples_per_class <- as.data.frame(table(class_index))[,2]
+
+for (class_i in 1:nclasses){
+  sample_indices <- which(class_index==class_i) # samples that are in class_i
+  fixed_class_sample_PLs <- sample_avg_PLs[sample_indices]
+
+  vectorized_FC_sample_PLs <- vectorize_landscapes(fixed_class_sample_PLs, PL_depth_cap)
+  vectorized_class_PL <- vectorize_landscapes(class_avg_PLs[class_i], PL_depth_cap)
+
+  FC_sample_pca <- prcomp(vectorized_FC_sample_PLs, scale=FALSE)
+  FC_sample_vars <- apply(FC_sample_pca$x, 2, var)
+  FC_sample_props <- FC_sample_vars / sum(FC_sample_vars)
+  FC_sample_cumprop2 <- 100*cumsum(FC_sample_props)[2]
+  projected_vectorized_class_PL <- scale(vectorized_class_PL, FC_sample_pca$center, FC_sample_pca$scale) %*% FC_sample_pca$rotation
+
+  x_lim <- c(min(FC_sample_pca$x[,1], projected_vectorized_class_PL[,1]),
+             max(FC_sample_pca$x[,1], projected_vectorized_class_PL[,1]))
+  y_lim <- c(min(FC_sample_pca$x[,2], projected_vectorized_class_PL[,2]),
+             max(FC_sample_pca$x[,2], projected_vectorized_class_PL[,2]))
+
+
+  plot(0, col='white', ann=FALSE, bty="n", xlim=x_lim, ylim=y_lim)
+  title(main=sprintf("%s PLs (n=%i) avg=red, %.0f%%", classes[class_i], samples_per_class[class_i], FC_sample_cumprop2), line=1)
+  points(t(projected_vectorized_class_PL[,c(1,2)]), col='red', pch=16)
+  points(FC_sample_pca$x[,c(1,2)], ann=FALSE, col='blue')
+
+  # plot PCA components
+  FC_sample_cumprop <- rep(0,samples_per_class[class_i])
+  for (k in 1:samples_per_class[class_i]){
+    FC_sample_cumprop[k] <- 100*cumsum(FC_sample_props)[k]
+  }
+  plot(FC_sample_cumprop, type="l", ann=FALSE, bty="L", ylim=c(0,100), xlim=c(1,10), xaxs="i", yaxs="i")
+  title(main=sprintf("%s, cumulative variance of PCs", classes[class_i]), line=1.3)
+  title( xlab="no. PCA components", ylab="percent")
+  # sample_pca_max <- max(abs(FC_sample_pca$rotation))
+  FC_sample_pca_max <-  0.15
+  FC_sample_pca_min <- -FC_sample_pca_max
+  for (i in 1:min(5,dim(FC_sample_pca$rotation)[2])){
+    FC_sample_pca_PL_int <- vector_to_landscape_data_array(FC_sample_pca$rotation[,i], min_x=min_x, max_x=max_x, dx=dx)
+    plot_landscape_data_array(FC_sample_pca_PL_int, y_max=FC_sample_pca_max, y_min=FC_sample_pca_min)
+    title(main=sprintf("%s, PC %i, %.1f%% of variance", classes[class_i], i, 100*FC_sample_props[i]))
+  }
+}
+```
+
+```{r sample-PLs-PCA}
+
+sample_pch_gens <- c(0,1,2,5)
+sample_pch <- c(rep(sample_pch_gens[1],10), rep(sample_pch_gens[2],10), rep(sample_pch_gens[3],10), rep(sample_pch_gens[4],10))
+class_pch <-  c(22,21,24,23) #c(15, 16, 17, 18) #c(22, 21, 24, 23)
+class_outline_pch <- c(0, 1, 2, 5)
+
+# compute PCA of sample PLs, then project class PLs onto it.
+sample_pca <- prcomp(vectorized_sample_PLs, scale=FALSE)
+sample_vars <- apply(sample_pca$x, 2, var)
+sample_props <- sample_vars / sum(sample_vars)
+sample_cumprop2 <- 100*cumsum(sample_props)[2]
+projected_vectorized_class_PLs <- scale(vectorized_class_PLs, sample_pca$center, sample_pca$scale) %*% sample_pca$rotation
+
+x_lim <- c(min(sample_pca$x[,1], projected_vectorized_class_PLs[,1]),
+           max(sample_pca$x[,1], projected_vectorized_class_PLs[,1]))
+y_lim <- c(min(sample_pca$x[,2], projected_vectorized_class_PLs[,2]),
+           max(sample_pca$x[,2], projected_vectorized_class_PLs[,2]))
+
+plot(0, col='white', ann=FALSE, bty="n", xlim=x_lim, ylim=y_lim, asp=1)
+title(main=sprintf("PCs from sample PLs, %i points, var explained=%.2f%%", nsamples, sample_cumprop2), line=1.3)
+points(sample_pca$x[,c(1,2)], ann=FALSE, col=viridis(nclasses)[class_index], bty="n", asp=1, xlim=x_lim, ylim=y_lim, pch=sample_pch, lwd=1.2)
+points(projected_vectorized_class_PLs[,1:2], pch=class_pch, bg=viridis(nclasses))
+
+# draw legend with lines and point but without labels and box. x.intersp controls horizontal distance between lines
+L = legend("bottomleft", legend = rep(NA,nclasses*2), col=c(rep("black",nclasses),viridis(nclasses)), pt.bg=c(viridis(nclasses), viridis(nclasses)), pch=c(class_pch,sample_pch_gens), pt.lwd=c(rep(1,nclasses),rep(1.2,nclasses)), ncol=2, bty='n', x.intersp=0.5, inset=0.02)
+# use position data of previous legend to draw legend with invisble lines and points but with labels and box. x.intersp controls distance between lines and labels
+legend(x = L$rect$left, y = L$rect$top, legend = classes, col=rep(NA,4), ncol=1, x.intersp=3, bg=NA)
+
+plot(0, col='white', ann=FALSE, bty="n", xlim=x_lim, ylim=y_lim, asp=1)
+title(main=sprintf("PCs from sample PLs, %i points, var explained=%.2f%%", nsamples, sample_cumprop2))
+points(sample_pca$x[,c(1,2)], ann=FALSE, col=viridis(nclasses)[class_index], bty="n", asp=1, xlim=x_lim, ylim=y_lim)
+for (i in 1:(nclasses-1)){
+  lines(projected_vectorized_class_PLs[c(i,i+1),1:2], col=viridis(2*nclasses-1)[2*i])
+}
+points(projected_vectorized_class_PLs[,1:2], col=viridis(nclasses), pch=16)
+
+for (k in 1:nclasses){
+  plot(0, col='white', ann=FALSE, bty="n", xlim=x_lim, ylim=y_lim, asp=1)
+  title(main=sprintf("%s sample PLs + class PL (solid) on sample PCs", classes[k]))
+  points(sample_pca$x[which(class_index==k),c(1,2)], col=viridis(nclasses)[k])
+  points(t(projected_vectorized_class_PLs[k,1:2]), col="red", pch=16) #viridis(nclasses)[k]
+  # if (k==2){ # highlight certain samples
+  #   points(t(sample_pca$x[13,c(1,2)]), col="red") # very tall landscape, very fast worm vid
+  # }
+}
+
+# take a PCA component and convert it into a landscape
+# ie, take a vector and display as landscape.
+sample_pca_max <- max(abs(sample_pca$rotation))
+sample_pca_max <-  0.15
+sample_pca_min <- -sample_pca_max
+sample_cumprop2 <- 100*cumsum(sample_props)[2]
+
+for (i in 1:min(5,dim(sample_pca$rotation)[2])){
+  sample_pca_PL_int <- vector_to_landscape_data_array(sample_pca$rotation[,i], min_x=min_x, max_x=max_x, dx=dx)
+  plot_landscape_data_array(sample_pca_PL_int, y_max=sample_pca_max, y_min=sample_pca_min)
+  title(main=sprintf("PC %i, %.1f%% of variance", i, 100*sample_props[i]))
+}
+# plot negatives of some principal components
+# i<-1
+# sample_pca_PL_int <- vector_to_landscape_data_array(-1*sample_pca$rotation[,i], min_x=min_x, max_x=max_x, dx=dx)
+# plot_landscape_data_array(sample_pca_PL_int, y_max=sample_pca_max, y_min=sample_pca_min)
+# title(main=sprintf("(negative of) PCA %i, %.1f%% of variance", i, 100*sample_props[i]))
+```
+
+
+
+```{r distances}
+labels <- classes
+labels_with_origin <- c("origin", labels)
+zero_landscape <- landscape0(t(c(0,0)), degree=1, exact=FALSE, dx=dx, min_x=min_x, max_x=max_x)
+vectorized_zero_landscape <- vectorize_landscapes(list(zero_landscape), PL_depth_cap)
+
+# distances between class landscapes (and zero landscape)
+print("distance computations -- UNnormalized")
+class_distances <- as.matrix(dist(rbind(vectorized_zero_landscape,vectorized_class_PLs), upper=TRUE, diag=TRUE), labels=TRUE)
+colnames(class_distances) <- rownames(class_distances) <- labels_with_origin
+class_distances
+heatmap(class_distances, Rowv=NA, Colv=NA, symm=TRUE, revC=TRUE, col=viridis(256),
+        main=" UNnormalized pairwise distances between class landscapes")
+legend(x="topright", legend=c("min", "middle", "max"), fill=viridis(3),bty="n")
+
+# normalize distances such that avg dist to origin is 1
+avg_dist_to_origin <- colSums(class_distances)[1]/nclasses
+print("normalize distances so avg distance to origin is 1")
+normalized_class_distances <- class_distances/avg_dist_to_origin
+normalized_class_distances
+heatmap(class_distances, Rowv=NA, Colv=NA, symm=TRUE, revC=TRUE, col=viridis(256),
+        main=" normalized pairwise distances between class landscapes")
+legend(x="topright", legend=c("min", "middle", "max"), fill=viridis(3),bty="n")
+
+# project distances down to 2 dimensions using multidimensional scaling
+class_distances_mds <- cmdscale(class_distances, k=2, eig=TRUE)
+plot(class_distances_mds$points, bg=c("red",viridis(nclasses)), pch=c(8,class_pch), bty="n", ann=FALSE, asp=1)
+title(main="Multid scaling: UNnornalized distances between classes and origin")
+normalized_class_distances_mds <- cmdscale(normalized_class_distances, k=2, eig=TRUE)
+shifted_norm_class_dist <- normalized_class_distances_mds$points - matrix(rep(normalized_class_distances_mds$points[1,],nclasses+1), ncol=2, byrow=TRUE) # translate so that origin landscape gets plotted at origin
+plot(shifted_norm_class_dist, bg=c("red",viridis(nclasses)), pch=c(8,class_pch), bty="n", ann=FALSE, asp=1)
+title(main="Multid scaling: normalized distances between classes and origin", line=1.3)
+legend("topright", inset=0.02, legend=labels_with_origin,
+       pt.bg=c("black",viridis(4)), pch=c(8,class_pch))
+
+```
+
+```{r standard-deviations-at-each-entry-of-landscape}
+# At each enty of a landscape, compute standard deviation of the samples in each class. 
+# Shows where most variation is in the landscapes. 
+
+class_std_dev_max <- 0
+class_std_devs <- matrix(nrow=nclasses, ncol=landscape_length*PL_depth_cap)
+for (class_i in 1:nclasses){
+  class_std_devs[class_i,] <- apply(vectorized_sample_PLs[which(class_index==class_i),], 2, sd)
+  class_std_dev_max <- max(class_std_dev_max,class_std_devs[class_i,])
+}
+
+for (class_i in 1:nclasses){
+  class_std_devs_int <- vector_to_landscape_data_array(class_std_devs[class_i,], min_x=min_x, max_x=max_x, dx=dx)
+  plot_landscape_data_array(class_std_devs_int, y_max=class_avg_max_y, y_min=0) # class_std_dev_max or class_avg_max_y
+  title(main=sprintf("Standard deviation for %s samples", classes[class_i]), line=1.3)
+}
+
+```
+
+```{r permutation test, eval=FALSE}
+num.repeats <- 10000
+perm_results <- c()
+print("Permutation test results:")
+for (i in 1:(nclasses-1)){  
+  for (j in (i+1):nclasses) {
+    perm_test <- permutation.test(vectorized_sample_PLs[((i-1)*10+1):(i*10),], vectorized_sample_PLs[((j-1)*10+1):(j*10),], num.repeats = num.repeats)
+    perm_results <- c(perm_results, perm_test)
+    print(sprintf("    %s x %s: %.4f", classes[i], classes[j], perm_test))
+  }
+}
+```
+
+```{r SVM, eval=FALSE}
+# SVM for landscapes
+data.labels <- class_index
+cost <- 10
+num.folds <- 10
+num.repeats <- 20
+svm_model.PL <- list()
+avg_cv_err <- 0
+for (i in 1:num.repeats){
+  svm_model.PL[[i]] <- ksvm(vectorized_sample_PLs,data.labels,type="C-svc",scaled=c(),kernel="vanilladot",C=cost,cross=num.folds)
+  avg_cv_err <- avg_cv_err + cross(svm_model.PL[[i]])
+}
+avg_cv_err <- avg_cv_err/num.repeats
+print(sprintf("Average error across %i repeats of %i-fold cross-validation: %f", num.repeats, num.folds, avg_cv_err))
+```
+
+```{r single-SVM, eval=FALSE}
+data.labels <- c(rep(1,10), rep(2,10), rep(3,10), rep(4,10))
+cost <- 10
+num.folds <- 10
+svm_model.PL <- ksvm(vectorized_sample_PLs,data.labels,type="C-svc",scaled=c(),kernel="vanilladot",C=cost,cross=num.folds)
+print(svm_model.PL)
+```
+
