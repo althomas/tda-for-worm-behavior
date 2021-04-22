@@ -27,7 +27,7 @@ class_index<- c(rep(1,10), rep(2,10), rep(3,10), rep(4,10)) # indicates the clas
 
 ################################## 
 ###### INPUT DATA FILEPATHS ######
-data_folder <- "./data/" # folder containing data to input in compute_diagrams.R
+data_folder <- "./data/environment/" # folder containing data to input in compute_diagrams.R
 samples <- list( # identifier for each sample (used in plot titles)
   "08262017_worm_1_1",
   "08262017_worm_7_2",

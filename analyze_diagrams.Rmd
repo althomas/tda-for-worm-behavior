@@ -15,7 +15,8 @@ knitr::opts_chunk$set(echo=FALSE)
 ```{r libraries, message=FALSE}
 library(viridis) # for colors
 library(tdatools)
-
+library(Matrix)
+library(kernlab)
 source("./source/persistence_utilities.R")
 source("./source/clean_NaNs.R")
 source("./source/subsample_patches.R")
@@ -24,7 +25,8 @@ source("./source/stat_utilities.R")
 ```
 
 ```{r config}
-load_file <- "./computations/viscosity_persistence_n500_p100_w5_2021-04-21_15:44.RData"
+# load_file <- diagram_computation_filepath
+load_file <- "./computations/viscosity_persistence_n500_p100_w5_2021-04-22_14:36.RData"
 load(load_file)
 print(sprintf("type of data: %s", data_type))
 print(sprintf("patch length %i", patch_length))
@@ -170,7 +172,7 @@ vectorized_sample_PLs <- vectorize_landscapes(sample_avg_PLs, PL_depth_cap)
 # these were not saved so we have to reload and recompute them. 
 
 i <- 1 # index of sample to explore
-raw_data <- read.csv(file=paste0(data_file_location,data_filenames[[i]]), header=FALSE)
+raw_data <- read.csv(file=paste0(data_folder,data_filenames[[i]]), header=FALSE)
 raw_data <- clean_NaNs(raw_data)
 patches <- subsample_patches(patch_length, raw_data)
 npatches <- length(patches)

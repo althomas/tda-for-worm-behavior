@@ -2,6 +2,9 @@
 ### Peter Bubenik
 ### October 11, 2019
 
+# Euclidean distance between vectors
+euclidean.distance <- function(u, v) sqrt(sum((u - v) ^ 2))
+
 # Permutation test for two matrices consisting of row vectors
 permutation.test <- function(M1 ,M2, num.repeats = 10000){
   # append zeros if necessary so that the matrices have the same number of columns

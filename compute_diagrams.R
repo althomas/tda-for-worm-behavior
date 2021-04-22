@@ -19,9 +19,9 @@ start_time <- proc.time()
 # load config parameters
 source("./config.R")
 save_computations <- TRUE
-save_file_location <- save_patch_computation_location 
-filename_base <- saved_patch_filename_base
-data_file_location <- save_curated_data_location
+save_file_location <- saved_persistence_computation_folder 
+filename_base <- saved_persistence_filename_base
+data_file_location <- data_folder
 save_filename <- sprintf("%s.RData", filename_base)
 
 
@@ -65,10 +65,9 @@ if (save_computations){
   diagram_computation_filepath <- paste0(save_file_location, save_filename)
   save(PDs, 
        patch_length, window_length, nframes, 
-       data_file_location, data_filenames, thetaMean_filenames, 
+       data_folder, data_filenames, 
        classes, class_index, filename_bases, 
        samples, nsamples, nclasses, samples_per_class, 
-       pca_basis_file, 
        README_computation, computation_time, 
        README_config, data_type, data_tag, 
     file=paste0(save_file_location,save_filename))

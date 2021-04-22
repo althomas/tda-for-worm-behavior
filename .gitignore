@@ -2,7 +2,9 @@
 # input and output folders #
 ###############
 data/*
+data
 computations/*
+computations
 
 # animation output #
 ##################
