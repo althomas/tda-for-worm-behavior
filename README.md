@@ -1,10 +1,10 @@
 # tda-for-worm-behavior
 
-**Repo is under construction and will be finished by end of April**
 
-By Ashleigh Thomas, Alex Elchesen, Iryna Hartsock, Peter Bubenik
+By Ashleigh Thomas, Alex Elchesen, Iryna Hartsock
+with contributions by Peter Bubenik
 
-Analyze videos of *C. elegans* behavior using persistent homology techniques as outlined in https://arxiv.org/abs/2102.09380. 
+Analyze videos of *C. elegans* behavior using persistent homology techniques as outlined in \[[arxiv](https://arxiv.org/abs/2102.09380) | [published](https://www.frontiersin.org/articles/10.3389/frai.2021.668395/full)\]. 
 
 
 ## Dependencies
